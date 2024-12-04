@@ -1,6 +1,33 @@
 import http.server
 import os
 
+class case_no_file(object):
+    ''' File or directory does not exist. '''
+
+    def test(self, handler):
+        return not os.path.exists(handler.full_path)
+    
+    def act(self, handler):
+        raise ServerException("'{0}' not found".format(handler.path))
+    
+class case_existing_file(object):
+    ''' File exists. '''
+
+    def test(self, handler):
+        return os.path.exists(handler.full_path)
+    
+    def act(self, handler):
+        handler.handle_file(handler.full_path)
+
+class case_always_fail(object):
+    ''' Base case if nothing else worked. '''
+
+    def test(self, handler):
+        return True
+    
+    def act(self, handler):
+        raise ServerException("Unkown object '{0}'".format(handler.path))
+
 class ServerException(Exception):
     """Custom exception to represent server-related errors."""
     def __init__(self, message):
@@ -40,19 +67,14 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             # figure out what exactly is being requested
-            full_path = os.getcwd() + self.path
+            self.full_path = os.getcwd() + self.path
 
-            # it doesn't exist...
-            if not os.path.exists(full_path):
-                raise ServerException("'{0}' not found".format(self.path))
-            
-            # ...it's a file...
-            elif os.path.isfile(full_path):
-                self.handle_file(full_path)
-
-            # ...it's something we don't handle
-            else:
-                raise ServerException("Unkown object '{0}'".format(self.path))
+            # figure out how to handle it
+            for case in self.Cases:
+                handler = case()
+                if handler.test(self):
+                    handler.act(self)
+                    break
         
         # handle errors
         except Exception as msg:
