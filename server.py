@@ -1,6 +1,11 @@
 import http.server
 import os
 
+class ServerException(Exception):
+    """Custom exception to represent server-related errors."""
+    def __init__(self, message):
+        super().__init__(message)
+
 class case_no_file(object):
     ''' File or directory does not exist. '''
 
@@ -28,40 +33,77 @@ class case_always_fail(object):
     def act(self, handler):
         raise ServerException("Unkown object '{0}'".format(handler.path))
 
-class ServerException(Exception):
-    """Custom exception to represent server-related errors."""
-    def __init__(self, message):
-        super().__init__(message)
+class case_directory_index_file(object):
+    '''
+    Serve index.html page for a directory
+    '''
 
+    def index_path(self, handler):
+        return os.path.join(handler.full_path, "index.html")
+    
+    def test(self, handler):
+        return os.path.isdir(handler.full_path) and os.path.isfile(self.index_path(handler))
+    
+    def act(self, handler):
+        handler.handle_file(self.index_path(handler))
+
+class case_directory_no_index_file(object):
+    '''
+    Serve listing for a directory without an index.html page.
+    '''
+
+    def index_path(handler):
+        return os.path.join(handler.full_path, "index.html")
+    
+    def test(self, handler):
+        return os.path.isdir(handler.full_path) and not os.path.isfile(self.index_path(handler))
+    
+    def act(self, handler):
+        handler.list_dir(handler.full_path)
 
 class RequestHandler(http.server.BaseHTTPRequestHandler):
-    '''Handle HTTP requests by returning a fixed "page"'''
-    
-    # page to send back.
-#     Page = '''\
-# <html>
-# <body>
-# <table>
-# <tr> <td>Header</td> <td>Value</td> </tr>
-# <tr> <td>Date and time</td> <td>{date_time}</td> </tr>
-# <tr> <td>Client host</td> <td>{client_host}</td> </tr>
-# <tr> <td>Client port</td> <td>{client_port}s</td> </tr>
-# <tr> <td>Command</td> <td>{command}</td> </tr>
-# <tr> <td>Path</td> <td>{path}</td> </tr>
-# </table>
-# </body>
-# </html>
-# '''
+    '''
+    If the requested path maps to a file, that file is served.
+    If anything goes wrong, an error page is constructed.
+    '''
+
+    # how to display a directory listing.
+    Listing_Page = '''
+    <html>
+    <body>
+    <ul>
+    {0}
+    </ul>
+    </body>
+    </html>
+    '''
 
     # error page
-    Error_Page = '''\
-<html>
-<body>
-<h1>Error accessing {path}</h1>
-<p>{msg}</p>
-</body>
-</html>
-'''
+    Error_Page = '''
+    <html>
+    <body>
+    <h1>Error accessing {path}</h1>
+    <p>{msg}</p>
+    </body>
+    </html>
+    '''
+
+    Cases = [
+        case_no_file(),
+        case_existing_file(),
+        case_always_fail(),
+        case_directory_index_file()
+    ]
+
+    def list_dir(self, full_path):
+        try:
+            entries = os.listdir(full_path)
+            bullets = ['<li>{0}</li>'.format(e) for e in entries if not e.startswith('.')]
+            page = self.Listing_Page.format('\n'.join(bullets))
+            self.send_content(page)
+        except OSError as msg:
+            msg = "'{0}' cannot be listed: {1}".format(self.path, msg)
+            self.handle_error(msg)
 
     # handle a GET request.
     def do_GET(self):
@@ -88,25 +130,6 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         except IOError as msg:
             msg = "'{0}' cannot be read: {1}".format(self.path, msg)
 
-    # def create_page(self):
-    #     values = {
-    #         "date_time": self.date_time_string(),
-    #         "client_host": self.client_address[0],
-    #         "client_port": self.client_address[1],
-    #         "command": self.command,
-    #         "path": self.path
-    #     }
-
-    #     page = self.Page.format(**values).encode("utf-8")
-    #     return page
-
-    # def send_page(self, page):
-    #     self.send_response(200)
-    #     self.send_header("Content-type", "text/html")
-    #     self.send_header("Content-length", str(len(page)))
-    #     self.end_headers()
-    #     self.wfile.write(page)
-
     # send actual content
     def send_content(self, content, status=200):
         self.send_response(status)
@@ -122,7 +145,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
 
 #----------------------------------------------------------------------
 
-if __name__ == '__main__':
+if __name__  == '__main__':
     serverAddress = ('', 8080)
     server = http.server.HTTPServer(serverAddress, RequestHandler)
     print("Serving on port 8080...")
